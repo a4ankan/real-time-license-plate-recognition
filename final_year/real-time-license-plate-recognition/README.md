@@ -496,7 +496,7 @@ Typical performance on NVIDIA GPU:
 
 ## Contributing
 
-This project is designed for educational purposes and serves as a portfolio piece. Contributions and improvements are welcome.
+This project is designed for educational purposes and serves as a portfolio piece.
 
 ## License
 
@@ -504,7 +504,7 @@ This project is designed for educational purposes and serves as a portfolio piec
 
 ## Contact
 
-[Your Name/Email]
+[ankan/ankanp227@gmail.com]
 
 ## References
 
