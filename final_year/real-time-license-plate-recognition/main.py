@@ -6,7 +6,7 @@ This is a modular, production-grade system for detecting and recognizing
 vehicle license plates from live video streams or pre-recorded videos using
 YOLO object detection and OCR.
 
-Current Phase: Video Stream Implementation
+Runs the complete detection, OCR, validation, tracking, and persistence pipeline.
 """
 
 import sys
@@ -21,9 +21,15 @@ import cv2
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from config import Config
-from video import VideoStream
-from detection import YOLODetector
-from preprocessing import PlatePreprocessor
+from src.video import VideoStream
+from src.detection import YOLODetector
+from src.preprocessing import PlatePreprocessor
+from src.database import DatabaseConnectionError, PlateRepository, PlateRepositoryError
+from src.pipeline import PlatePipeline
+from src.recognition import OCREngine
+from src.tracking import PlateTracker
+from src.validation import PlateValidator
+from src.visualization import Display
 
 
 def setup_logging():
@@ -65,6 +71,12 @@ def parse_arguments():
         '--verbose',
         action='store_true',
         help='Enable verbose logging'
+    )
+
+    parser.add_argument(
+        '--headless',
+        action='store_true',
+        help='Process frames without opening an OpenCV display window'
     )
     
     return parser.parse_args()
@@ -558,6 +570,107 @@ def phase4_test_plate_preprocessor(source='webcam', debug=False, verbose=False):
         return 1
 
 
+def phase11_run_full_pipeline(source='webcam', debug=False, verbose=False, headless=False):
+    """Run video through detection, OCR, validation, tracking, and MySQL."""
+    logger = logging.getLogger(__name__)
+    if debug:
+        Config.DEBUG_MODE = True
+    if verbose:
+        Config.VERBOSE_LOGGING = True
+    stream = None
+    display = Display()
+
+    try:
+        Config.ensure_dirs_exist()
+        detector = YOLODetector()
+        preprocessor = PlatePreprocessor()
+        validator = PlateValidator()
+        tracker = PlateTracker()
+
+        try:
+            ocr_engine = OCREngine()
+            logger.info("OCR engine initialized: %s", Config.OCR_ENGINE)
+        except (ImportError, OSError, RuntimeError, ValueError):
+            logger.exception("OCR is unavailable; continuing with detection only")
+            ocr_engine = None
+
+        repository = PlateRepository()
+        try:
+            repository.initialize_schema()
+            logger.info("MySQL schema is ready")
+        except (DatabaseConnectionError, PlateRepositoryError):
+            logger.exception("MySQL is unavailable; continuing without persistence")
+            repository = None
+
+        video_source = Config.CAMERA_ID if source.lower() == "webcam" else source
+        stream = VideoStream(source=video_source)
+        pipeline = PlatePipeline(
+            detector=detector,
+            preprocessor=preprocessor,
+            ocr_engine=ocr_engine,
+            validator=validator,
+            tracker=tracker,
+            repository=repository,
+        )
+
+        logger.info("Processing %s; press 'q' to quit", video_source)
+        frame_index = 0
+        processing_started = time.monotonic()
+        fps_window_start = time.monotonic()
+        confirmed_count = 0
+        while True:
+            success, frame = stream.read()
+            if not success:
+                logger.info("Video stream ended after %d frames", stream.get_frame_count())
+                break
+
+            frame_index += 1
+            now = time.monotonic()
+            stream.update_fps(now, fps_window_start)
+            if now - fps_window_start >= 1.0:
+                fps_window_start = now
+
+            result = pipeline.process_frame(frame, frame_index)
+            confirmed_count += sum(state.should_save for state in result.track_states)
+            rendered = display.draw(
+                frame,
+                result.detections,
+                result.ocr_results,
+                result.track_states,
+                stream.get_fps(),
+            )
+
+            if frame_index % 30 == 0:
+                logger.info(
+                    "Frame %d | FPS %.1f | detections %d | confirmed %d",
+                    frame_index,
+                    stream.get_fps(),
+                    len(result.detections),
+                    confirmed_count,
+                )
+            if not headless and display.show(rendered, "License Plate Recognition"):
+                break
+
+        elapsed = time.monotonic() - processing_started
+        average_fps = stream.get_frame_count() / elapsed if elapsed > 0 else 0.0
+        logger.info(
+            "Finished: %d frames processed, %d confirmed plate events, "
+            "average processing FPS %.2f",
+            stream.get_frame_count(),
+            confirmed_count,
+            average_fps,
+        )
+        return 0
+    except (FileNotFoundError, ImportError, OSError, RuntimeError, ValueError):
+        logger.exception("Could not start or continue the recognition pipeline")
+        return 1
+    finally:
+        if stream is not None:
+            stream.release()
+        if not headless:
+            display.close()
+
+
 
 def main():
     """
@@ -596,14 +709,15 @@ def main():
         
         logger.info("[OK] System initialized successfully")
         
-        # Phase 4: Test plate preprocessing
-        return phase4_test_plate_preprocessor(
+        # Run the complete recognition pipeline
+        return phase11_run_full_pipeline(
             source=args.source,
             debug=args.debug,
-            verbose=args.verbose
+            verbose=args.verbose,
+            headless=args.headless,
         )
         
-    except Exception as e:
+    except (FileNotFoundError, ImportError, OSError, RuntimeError, ValueError) as e:
         logger.error(f"[FAILED] Error during initialization: {e}", exc_info=True)
         return 1
 
