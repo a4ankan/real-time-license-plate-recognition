@@ -67,6 +67,7 @@ class Config:
     OCR_ENGINE = os.getenv('OCR_ENGINE', 'easyocr')  # 'easyocr' or 'tesseract'
     OCR_LANGUAGE = os.getenv('OCR_LANGUAGE', 'en')
     OCR_CONFIDENCE_THRESHOLD = float(os.getenv('OCR_CONFIDENCE_THRESHOLD', 0.3))
+    OCR_EVERY_N_FRAMES = int(os.getenv('OCR_EVERY_N_FRAMES', 1))
 
     # ================================================
     # VIDEO/CAMERA CONFIGURATION
@@ -85,6 +86,9 @@ class Config:
     TRACKING_MIN_OBSERVATIONS = int(os.getenv('TRACKING_MIN_OBSERVATIONS', 3))
     TRACKING_CONFIDENCE_THRESHOLD = float(os.getenv('TRACKING_CONFIDENCE_THRESHOLD', 0.7))
     TRACKING_MAX_DISTANCE = float(os.getenv('TRACKING_MAX_DISTANCE', 100))
+    TRACKING_IOU_THRESHOLD = float(os.getenv('TRACKING_IOU_THRESHOLD', 0.3))
+    TRACKING_COOLDOWN_FRAMES = int(os.getenv('TRACKING_COOLDOWN_FRAMES', 300))
+    TRACKING_OBSERVATION_WINDOW = int(os.getenv('TRACKING_OBSERVATION_WINDOW', 20))
 
     # ================================================
     # OUTPUT CONFIGURATION
@@ -138,11 +142,14 @@ class Config:
     def validate(cls):
         """
         Validate critical configuration values.
-        Raises ValueError if critical settings are missing.
+        Raises FileNotFoundError if the configured YOLO model is missing.
         """
-        if not os.path.exists(cls.YOLO_MODEL_PATH):
-            print(f"WARNING: YOLO model not found at {cls.YOLO_MODEL_PATH}")
-            print("Download or train a license plate detection model and place it in the models/ directory")
+        if not os.path.isfile(cls.YOLO_MODEL_PATH):
+            raise FileNotFoundError(
+                f"YOLO model not found: {cls.YOLO_MODEL_PATH}\n"
+                "Download a license-plate detection model to that path or set "
+                "YOLO_MODEL_PATH in .env."
+            )
 
     @classmethod
     def print_config(cls):
